@@ -5,15 +5,15 @@
 #include "soc/rtc_wdt.h"
 
 // motor pins and chanels
-#define FRONT_LEFT_PIN 25 //CW
-#define FRONT_RIGHT_PIN 26 //CCW
-#define REAR_LEFT_PIN 27 //CW
-#define REAR_RIGHT_PIN 14 //CCW
+#define FRONT_LEFT_PIN 25 //CW, blue wire
+#define FRONT_RIGHT_PIN 26 //CCW, red wire
+#define REAR_LEFT_PIN 27 //CW, black wire
+#define REAR_RIGHT_PIN 14 //CCW, orange wire
 
-#define FRONT_LEFT 0 //CW, blue wire
-#define FRONT_RIGHT 1 //CCW, red wire
-#define REAR_LEFT 2 //CW, black wire
-#define REAR_RIGHT 3 //CCW, orange wire
+#define FRONT_LEFT 0 //CW
+#define FRONT_RIGHT 1 //CCW
+#define REAR_LEFT 2 //CW
+#define REAR_RIGHT 3 //CCW
 
 // frequenmcy for pwm (must be between 50 and 60)
 #define PWM_FREQ 55
@@ -35,7 +35,7 @@
 #define PID_D 2
 
 // control scaling constants
-#define SPIN_SCALE 10.f
+#define SPIN_SCALE 500.f
 
 // WiFi ssid and password
 const char* ssid     = "ESP32-Drone";
@@ -77,9 +77,9 @@ float angle_errors[3];
 float angle_errors_sum[3] = {0.f, 0.f, 0.f};
 float angle_errors_prev[3] = {0.f, 0.f, 0.f};
 
-const float kpid [3][3] = {{0.1f, 0.1f, 0.1f},  // P: yaw, pitch, roll
-                           {0.1f, 0.1f, 0.1f},  // I: yaw, pitch, roll
-                           {0.1f, 0.1f, 0.1f}}; // D: yaw, pitch, roll
+const float kpid [3][3] = {{1.f, 0.001f, 1.f},  // yaw:   P, I, D
+                           {1.f, 0.001f, 1.f},  // pitch: P, I, D
+                           {1.f, 0.0012f, 1.f}}; // roll:  P, I, D
 
 int FIFO_packet_size;
 uint8_t *FIFO_buffer;
@@ -94,25 +94,9 @@ inline uint16_t throttle_to_pwm(double ms)
 void setup()
 {
   Wire.begin();
+  Wire.setClock(400000);
     
   Serial.begin(38400);
-
-  //Serial.println("Initializing I2C devices...");
-  accelgyro.initialize();
-
-  // verify connection
-  //Serial.println("Testing device connections...");
-  //Serial.println(accelgyro.testConnection() ? "MPU6050 connection successful" : "MPU6050 connection failed");
-
-  // use the code below to change accel/gyro offset values
-  
-  /*Serial.print(accelgyro.getXAccelOffset()); Serial.print("\t"); // -76
-  Serial.print(accelgyro.getYAccelOffset()); Serial.print("\t"); // -2359
-  Serial.print(accelgyro.getZAccelOffset()); Serial.print("\t"); // 1688
-  Serial.print(accelgyro.getXGyroOffset()); Serial.print("\t"); // 0
-  Serial.print(accelgyro.getYGyroOffset()); Serial.print("\t"); // 0
-  Serial.print(accelgyro.getZGyroOffset()); Serial.print("\t"); // 0
-  Serial.print("\n");*/
 
   // FLIGHT SETUP CODE
   ledcSetup(FRONT_LEFT, 55, 16); // canal 0, frecventa 55, 16 biti rezolutie
@@ -172,6 +156,7 @@ void setup()
   // own fusion of gyro and acceleration samples would be a pain so we will use
   // the sensor's DMP which only has a sample rate of 200hZ but provides us
   // with already processed data
+  accelgyro.initialize();
   accelgyro.dmpInitialize();
   
   Serial.println("Setting internal sensor offsets...");
@@ -185,9 +170,9 @@ void setup()
   accelgyro.PrintActiveOffsets();
   
   accelgyro.setDMPEnabled(true);
+  byte stat = accelgyro.getIntStatus();
   FIFO_packet_size = accelgyro.dmpGetFIFOPacketSize();
   FIFO_buffer = (uint8_t *)malloc(FIFO_packet_size * sizeof(uint8_t));
-  byte stat = accelgyro.getIntStatus();
   
   // We want 200Hz looptime, so a loop every 5ms 
   // 80MHz base timer frequency, divided by 80 gives 1MHz freq, so each increment will be 1us
@@ -213,6 +198,9 @@ void drone_calibrate(void *param)
   while(true)
   {
     xSemaphoreTake(calibration_sem, portMAX_DELAY);
+
+    if(joystick_throttle == 0.f)
+      continue;
     
     angle_errors[YAW] = desired_angles[YAW] - angles[YAW];
     angle_errors[PITCH] = desired_angles[PITCH] - angles[PITCH];
@@ -251,15 +239,15 @@ void drone_calibrate(void *param)
     }
     i++;
     
-    /*ledcWrite(FRONT_LEFT, throttle_to_pwm(throttle_front_left));
+    ledcWrite(FRONT_LEFT, throttle_to_pwm(throttle_front_left));
     ledcWrite(FRONT_RIGHT, throttle_to_pwm(throttle_front_right));
     ledcWrite(REAR_LEFT, throttle_to_pwm(throttle_rear_left));
-    ledcWrite(REAR_RIGHT, throttle_to_pwm(throttle_rear_right));*/
+    ledcWrite(REAR_RIGHT, throttle_to_pwm(throttle_rear_right));
 
-    ledcWrite(FRONT_LEFT, throttle_to_pwm(joystick_throttle));
+    /*ledcWrite(FRONT_LEFT, throttle_to_pwm(joystick_throttle));
     ledcWrite(FRONT_RIGHT, throttle_to_pwm(joystick_throttle));
     ledcWrite(REAR_LEFT, throttle_to_pwm(joystick_throttle));
-    ledcWrite(REAR_RIGHT, throttle_to_pwm(joystick_throttle));
+    ledcWrite(REAR_RIGHT, throttle_to_pwm(joystick_throttle));*/
   }
 }
 
@@ -275,6 +263,12 @@ void sample_gyro(void *param)
   {
     xSemaphoreTake(gyro_sem, portMAX_DELAY);
     byte stat = accelgyro.getIntStatus();
+
+    if(stat & (1 << MPU6050_INTERRUPT_FIFO_OFLOW_BIT))
+    {
+      accelgyro.resetFIFO();
+      continue;
+    }
     
     while(accelgyro.getFIFOCount() < FIFO_packet_size)
       ;
