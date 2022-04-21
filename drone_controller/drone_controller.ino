@@ -77,9 +77,9 @@ float angle_errors[3];
 float angle_errors_sum[3] = {0.f, 0.f, 0.f};
 float angle_errors_prev[3] = {0.f, 0.f, 0.f};
 
-const float kpid [3][3] = {{1.f, 0.001f, 1.f},  // yaw:   P, I, D
-                           {1.f, 0.001f, 1.f},  // pitch: P, I, D
-                           {1.f, 0.0012f, 1.f}}; // roll:  P, I, D
+const float kpid [3][3] = {{1.f, 0.f, 1.f},  // yaw:   P, I, D
+                           {1.f, 0.f, 1.f},  // pitch: P, I, D
+                           {1.f, 0.f, 1.f}}; // roll:  P, I, D
 
 int FIFO_packet_size;
 uint8_t *FIFO_buffer;
@@ -200,7 +200,13 @@ void drone_calibrate(void *param)
     xSemaphoreTake(calibration_sem, portMAX_DELAY);
 
     if(joystick_throttle == 0.f)
+    {
+      ledcWrite(FRONT_LEFT, throttle_to_pwm(0.f));
+      ledcWrite(FRONT_RIGHT, throttle_to_pwm(0.f));
+      ledcWrite(REAR_LEFT, throttle_to_pwm(0.f));
+      ledcWrite(REAR_RIGHT, throttle_to_pwm(0.f));
       continue;
+    }
     
     angle_errors[YAW] = desired_angles[YAW] - angles[YAW];
     angle_errors[PITCH] = desired_angles[PITCH] - angles[PITCH];
