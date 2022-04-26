@@ -36,12 +36,17 @@
 
 // control scaling constants
 #define SPIN_SCALE 500.f
+#define MAX_ANGLE 30.f
+
+// math constants
+#define PI 3.14159265359
 
 // WiFi ssid and password
 const char* ssid     = "ESP32-Drone";
 const char* password = "incercatisamahackati";
 WiFiServer server(42069);
 WiFiClient client;
+bool has_disconnected = false;
 
 // current command values
 float joystick_throttle;
@@ -66,8 +71,8 @@ void IRAM_ATTR sample_gyro_on_interrupt()
 
 // everything gyro-related
 MPU6050 accelgyro;
-const int16_t acc_off[3] = {-5909, 5955, 8661};
-const int16_t gyr_off[3] = {-27, -25, -15};
+const int16_t acc_off[3] = {-5909, 6131, 8659};
+const int16_t gyr_off[3] = {-28, -26, -17};
 Quaternion quat;
 VectorFloat grav;
 
@@ -77,9 +82,9 @@ float angle_errors[3];
 float angle_errors_sum[3] = {0.f, 0.f, 0.f};
 float angle_errors_prev[3] = {0.f, 0.f, 0.f};
 
-const float kpid [3][3] = {{1.f, 0.f, 1.f},  // yaw:   P, I, D
-                           {1.f, 0.f, 1.f},  // pitch: P, I, D
-                           {1.f, 0.f, 1.f}}; // roll:  P, I, D
+const float kpid [3][3] = {{1.f, 0.f, 3.f},  // yaw:   P, I, D
+                           {1.f, 0.f, 10.f},  // pitch: P, I, D
+                           {1.f, 0.f, 10.f}}; // roll:  P, I, D
 
 int FIFO_packet_size;
 uint8_t *FIFO_buffer;
@@ -88,7 +93,17 @@ uint8_t *FIFO_buffer;
 
 inline uint16_t throttle_to_pwm(double ms)
 {
-  return uint16_t((ms + 1.0) / 1000.0 * double(PWM_FREQ) * 65535.0);
+  return uint16_t((ms + 1.0 + 0.2) / 1000.0 * double(PWM_FREQ) * 65535.0);
+}
+
+void WiFiEvent(WiFiEvent_t event)
+{
+  switch(event)
+  {
+  case SYSTEM_EVENT_AP_STADISCONNECTED:
+    has_disconnected = true;
+    break;
+  }
 }
 
 void setup()
@@ -110,7 +125,7 @@ void setup()
   ledcAttachPin(REAR_RIGHT_PIN, REAR_RIGHT);
     
   uint16_t startup_freq = throttle_to_pwm(0.0);
-  uint16_t zero_freq = throttle_to_pwm(0.0);
+  //uint16_t zero_freq = throttle_to_pwm(0.0);
   ledcWrite(FRONT_LEFT, startup_freq);
   ledcWrite(FRONT_RIGHT, startup_freq);
   ledcWrite(REAR_LEFT, startup_freq);
@@ -127,14 +142,15 @@ void setup()
   ledcWrite(REAR_LEFT,throttle_to_pwm(0.00 , 55));
   ledcWrite(REAR_RIGHT, throttle_to_pwm(0.27 , 55));
   delay(2000);
-  ledcWrite(REAR_RIGHT, throttle_to_pwm(0.00 , 55));*/
+  ledcWrite(REAR_RIGHT, throttle_to_pwm(0.00 , 55));
   ledcWrite(FRONT_LEFT, zero_freq);
   ledcWrite(FRONT_RIGHT, zero_freq);
   ledcWrite(REAR_LEFT, zero_freq);
-  ledcWrite(REAR_RIGHT, zero_freq);
+  ledcWrite(REAR_RIGHT, zero_freq);*/
 
   // Wi-Fi AP
   WiFi.softAP(ssid, password);
+  WiFi.onEvent(WiFiEvent);
 
   IPAddress IP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
@@ -245,15 +261,15 @@ void drone_calibrate(void *param)
     }
     i++;
     
-    ledcWrite(FRONT_LEFT, throttle_to_pwm(throttle_front_left));
+    /*ledcWrite(FRONT_LEFT, throttle_to_pwm(throttle_front_left));
     ledcWrite(FRONT_RIGHT, throttle_to_pwm(throttle_front_right));
     ledcWrite(REAR_LEFT, throttle_to_pwm(throttle_rear_left));
-    ledcWrite(REAR_RIGHT, throttle_to_pwm(throttle_rear_right));
+    ledcWrite(REAR_RIGHT, throttle_to_pwm(throttle_rear_right));*/
 
-    /*ledcWrite(FRONT_LEFT, throttle_to_pwm(joystick_throttle));
+    ledcWrite(FRONT_LEFT, throttle_to_pwm(joystick_throttle));
     ledcWrite(FRONT_RIGHT, throttle_to_pwm(joystick_throttle));
     ledcWrite(REAR_LEFT, throttle_to_pwm(joystick_throttle));
-    ledcWrite(REAR_RIGHT, throttle_to_pwm(joystick_throttle));*/
+    ledcWrite(REAR_RIGHT, throttle_to_pwm(joystick_throttle));
   }
 }
 
@@ -307,10 +323,10 @@ void sample_gyro(void *param)
     i++;
     if(i == 100)
     {
-    Serial.print("Unghiurile: ");
-    Serial.print(String(angles[YAW]) + " ");
-    Serial.print(String(angles[PITCH]) + " ");
-    Serial.println(String(angles[ROLL]));
+    //Serial.print("Unghiurile: ");
+    //Serial.print(String(angles[YAW]) + " ");
+    //Serial.print(String(angles[PITCH]) + " ");
+    //Serial.println(String(angles[ROLL]));
     i = 0;
     }
   }
@@ -321,11 +337,18 @@ String command = "";
 
 void loop()
 {
+  if(has_disconnected)
+  {
+    client.stop();
+    has_disconnected = false;
+    joystick_throttle = 0.f;
+  }
   if(!client.connected())
   {
     client = server.available();
     command_complete = false;
     command = "";
+    joystick_throttle = 0.f;
   }
   else
   {
@@ -355,11 +378,18 @@ void loop()
       }
       else
       {
-        int pos2 = command.indexOf(", ") + 2;
+        int pos2 = nr.indexOf(", ") + 2;
         String nr2 = nr.substring(pos2);
         int param2 = nr2.toInt();
-        pitch_angle = param;
-        pitch_strength = param2;
+        pitch_angle = param / 180.f * PI;
+        pitch_strength = param2 / 100.f * (MAX_ANGLE / 180.f * PI);
+
+        float proj_len = sinf(pitch_strength);
+        float x = proj_len * cosf(pitch_angle);
+        float y = proj_len * sinf(pitch_angle);
+        float z = cosf(pitch_strength);
+        desired_angles[PITCH] = -atan2f(y, z);
+        desired_angles[ROLL] = atan2f(x, z);
       }
       command = "";
       command_complete = false;
