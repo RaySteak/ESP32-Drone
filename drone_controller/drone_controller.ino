@@ -16,7 +16,7 @@
 #define REAR_RIGHT 3 //CCW
 
 // frequenmcy for pwm (must be between 50 and 60)
-#define PWM_FREQ 55
+#define PWM_FREQ 50
 
 // loop time in microseconds
 #define LOOP_TIME_us 5000
@@ -54,22 +54,23 @@ float spin;
 float pitch_angle;
 float pitch_strength;
 
-// calibration and gyro loops
-hw_timer_t *calibration_timer = NULL, *gyro_timer = NULL;
-SemaphoreHandle_t calibration_sem = NULL, gyro_sem = NULL;
-TaskHandle_t calibration_handle, gyro_handle;
+// calibration timer and task
+hw_timer_t *calibration_timer = NULL;
+TaskHandle_t calibration_handle;
 
+// calibration and gyro interrupts
 void IRAM_ATTR drone_calibrate_on_timer()
 {
-  xSemaphoreGive(calibration_sem);
+  xTaskNotifyGive(calibration_handle);
 }
 
+volatile bool gyro_ready = false;
 void IRAM_ATTR sample_gyro_on_interrupt()
 {
-  xSemaphoreGive(gyro_sem);
+  gyro_ready = true;
 }
 
-// everything gyro-related
+// everything else gyro-related
 MPU6050 accelgyro;
 const int16_t acc_off[3] = {-5909, 6131, 8659};
 const int16_t gyr_off[3] = {-28, -26, -17};
@@ -81,10 +82,11 @@ float desired_angles[3] = {0.f, 0.f, 0.f};
 float angle_errors[3];
 float angle_errors_sum[3] = {0.f, 0.f, 0.f};
 float angle_errors_prev[3] = {0.f, 0.f, 0.f};
+const float reference_angles[3] = {0.f, 0.f, 0.03f};
 
-const float kpid [3][3] = {{1.f, 0.f, 3.f},  // yaw:   P, I, D
-                           {1.f, 0.f, 10.f},  // pitch: P, I, D
-                           {1.f, 0.f, 10.f}}; // roll:  P, I, D
+const float kpid [3][3] = {{0.f, 0.f, 0.f},  // yaw:   P, I, D
+                           {0.2f, 0.f, 2.6f},  // pitch: P, I, D
+                           {0.2f, 0.f, 2.6f}}; // roll:  P, I, D
 
 int FIFO_packet_size;
 uint8_t *FIFO_buffer;
@@ -93,7 +95,7 @@ uint8_t *FIFO_buffer;
 
 inline uint16_t throttle_to_pwm(double ms)
 {
-  return uint16_t((ms + 1.0 + 0.2) / 1000.0 * double(PWM_FREQ) * 65535.0);
+  return uint16_t((ms + 1.0/* + 0.15*/) / 1000.0 * double(PWM_FREQ) * 65535.0);
 }
 
 void WiFiEvent(WiFiEvent_t event)
@@ -108,6 +110,7 @@ void WiFiEvent(WiFiEvent_t event)
 
 void setup()
 {
+  pinMode(LED_BUILTIN, OUTPUT);
   Wire.begin();
   Wire.setClock(400000);
     
@@ -125,11 +128,12 @@ void setup()
   ledcAttachPin(REAR_RIGHT_PIN, REAR_RIGHT);
     
   uint16_t startup_freq = throttle_to_pwm(0.0);
-  //uint16_t zero_freq = throttle_to_pwm(0.0);
+
   ledcWrite(FRONT_LEFT, startup_freq);
   ledcWrite(FRONT_RIGHT, startup_freq);
   ledcWrite(REAR_LEFT, startup_freq);
   ledcWrite(REAR_RIGHT, startup_freq);
+  
   /*delay(3000);
   ledcWrite(FRONT_LEFT, throttle_to_pwm(0.27 , 55));
   delay(2000);
@@ -157,14 +161,8 @@ void setup()
   Serial.println(IP);
   server.begin();
 
-  // semaphores
-  calibration_sem = xSemaphoreCreateBinary();
-  gyro_sem = xSemaphoreCreateBinary();
-
   // create calibration task
-  //xTaskCreatePinnedToCore(network, "network", 5000, NULL, 0, &network_handle, 0);
   xTaskCreate(drone_calibrate, "drone_calibrate", 5000, NULL, 0, &calibration_handle);
-  xTaskCreate(sample_gyro, "gyro_sample", 5000, NULL, 0, &gyro_handle);
 
   // 8kHz looptime would be ideal, to match modern speed controllers
   // and it can't be achieved because the MPU6050 acceleration sensor sampling rate
@@ -198,10 +196,6 @@ void setup()
   timerAlarmEnable(calibration_timer);
 
   attachInterrupt(digitalPinToInterrupt(MPU_INTERRUPT), sample_gyro_on_interrupt, RISING);
-  /*gyro_timer = timerBegin(0, 80, true);
-  timerAttachInterrupt(gyro_timer, &sample_gyro_on_timer, true);
-  timerAlarmWrite(gyro_timer, SAMPLE_RATE_us, true);
-  timerAlarmEnable(gyro_timer);*/
 }
 
 void drone_calibrate(void *param)
@@ -211,18 +205,31 @@ void drone_calibrate(void *param)
   float angle_errors_delta[3];
   float actual_angles[3];
   float pid[3];
+
+  bool printed_zero = false;
+  bool led_state = false;
+  
   while(true)
   {
-    xSemaphoreTake(calibration_sem, portMAX_DELAY);
-
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     if(joystick_throttle == 0.f)
     {
       ledcWrite(FRONT_LEFT, throttle_to_pwm(0.f));
       ledcWrite(FRONT_RIGHT, throttle_to_pwm(0.f));
       ledcWrite(REAR_LEFT, throttle_to_pwm(0.f));
       ledcWrite(REAR_RIGHT, throttle_to_pwm(0.f));
+
+      if(!printed_zero)
+      {
+        Serial.println("STOP");
+        printed_zero = true;
+      }
+      digitalWrite(LED_BUILTIN, LOW);
+      
       continue;
     }
+    else
+      printed_zero = false;
     
     angle_errors[YAW] = desired_angles[YAW] - angles[YAW];
     angle_errors[PITCH] = desired_angles[PITCH] - angles[PITCH];
@@ -258,77 +265,85 @@ void drone_calibrate(void *param)
     {
     Serial.println(String(throttle_front_left) + " " + String(throttle_front_right) + " " + String(throttle_rear_left) + " " + String(throttle_rear_right));
     i = 0;
+    led_state = !led_state;
+    digitalWrite(LED_BUILTIN, led_state);
     }
     i++;
     
-    /*ledcWrite(FRONT_LEFT, throttle_to_pwm(throttle_front_left));
+    ledcWrite(FRONT_LEFT, throttle_to_pwm(throttle_front_left));
     ledcWrite(FRONT_RIGHT, throttle_to_pwm(throttle_front_right));
     ledcWrite(REAR_LEFT, throttle_to_pwm(throttle_rear_left));
-    ledcWrite(REAR_RIGHT, throttle_to_pwm(throttle_rear_right));*/
+    ledcWrite(REAR_RIGHT, throttle_to_pwm(throttle_rear_right));
 
-    ledcWrite(FRONT_LEFT, throttle_to_pwm(joystick_throttle));
+    /*ledcWrite(FRONT_LEFT, throttle_to_pwm(joystick_throttle));
     ledcWrite(FRONT_RIGHT, throttle_to_pwm(joystick_throttle));
     ledcWrite(REAR_LEFT, throttle_to_pwm(joystick_throttle));
-    ledcWrite(REAR_RIGHT, throttle_to_pwm(joystick_throttle));
+    ledcWrite(REAR_RIGHT, throttle_to_pwm(joystick_throttle));*/
   }
 }
 
-void sample_gyro(void *param)
+void sample_gyro()
 {
-  int i = 0;
   float aux_angles[3];
   bool first_measurement = true;
-  float reference_angles[3];
   float measured_angles[3];
   
-  while(true)
-  {
-    xSemaphoreTake(gyro_sem, portMAX_DELAY);
-    byte stat = accelgyro.getIntStatus();
+  if(!gyro_ready)
+    return;
+  gyro_ready = false;
+  byte stat = accelgyro.getIntStatus();
 
-    if(stat & (1 << MPU6050_INTERRUPT_FIFO_OFLOW_BIT))
-    {
-      accelgyro.resetFIFO();
-      continue;
-    }
+  if((stat & (1 << MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || accelgyro.getFIFOCount() >= 1024)
+  {
+    Serial.println(String("HAI CA S-A RESETAT ") + String(accelgyro.getFIFOCount()));
+    accelgyro.resetFIFO();
+    return;
+  }
     
-    while(accelgyro.getFIFOCount() < FIFO_packet_size)
-      ;
-    //Serial.println("FIFOUL E " + String(accelgyro.getFIFOCount()));
-    accelgyro.getFIFOBytes(FIFO_buffer, FIFO_packet_size);
-    accelgyro.dmpGetQuaternion(&quat, FIFO_buffer);
-    accelgyro.dmpGetGravity(&grav, &quat);
-    accelgyro.dmpGetYawPitchRoll(aux_angles, &quat, &grav);
-    measured_angles[YAW] = aux_angles[YAW];
-    measured_angles[PITCH] = aux_angles[ROLL];
-    measured_angles[ROLL] = -aux_angles[PITCH];
-    if(first_measurement)
-    {
-      reference_angles[YAW] = measured_angles[YAW];
-      reference_angles[PITCH] = measured_angles[PITCH];
-      reference_angles[ROLL] = measured_angles[ROLL];
-      first_measurement = false;
-    }
-    angles[YAW] = measured_angles[YAW] - reference_angles[YAW];
-    angles[PITCH] = measured_angles[PITCH] - reference_angles[PITCH];
-    angles[ROLL] = measured_angles[ROLL] - reference_angles[ROLL];
-    /*accelgyro.getAcceleration(&ax, &ay, &az);
-    accelgyro.getRotation(&gx, &gy, &gz);
-    Serial.print(transf_acc(ax)); Serial.print("\t");
-    Serial.print(transf_acc(ay)); Serial.print("\t");
-    Serial.print(transf_acc(az)); Serial.print("\t");
-    Serial.print(gx); Serial.print("\t");
-    Serial.print(gy); Serial.print("\t");
-    Serial.println(gz);*/
-    i++;
-    if(i == 100)
-    {
-    //Serial.print("Unghiurile: ");
-    //Serial.print(String(angles[YAW]) + " ");
-    //Serial.print(String(angles[PITCH]) + " ");
-    //Serial.println(String(angles[ROLL]));
-    i = 0;
-    }
+  while(accelgyro.getFIFOCount() < FIFO_packet_size)
+  {
+    Serial.println("ASTEPTAM SA CITIM");
+  }
+  
+  accelgyro.getFIFOBytes(FIFO_buffer, FIFO_packet_size);
+  accelgyro.dmpGetQuaternion(&quat, FIFO_buffer);
+  accelgyro.dmpGetGravity(&grav, &quat);
+  accelgyro.dmpGetYawPitchRoll(aux_angles, &quat, &grav);
+  measured_angles[YAW] = aux_angles[YAW];
+  measured_angles[PITCH] = aux_angles[ROLL];
+  measured_angles[ROLL] = -aux_angles[PITCH];
+  /*if(first_measurement)
+  {
+    reference_angles[YAW] = measured_angles[YAW];
+    reference_angles[PITCH] = measured_angles[PITCH];
+    reference_angles[ROLL] = measured_angles[ROLL];
+    first_measurement = false;
+  }*/
+  /*angles[YAW] = measured_angles[YAW];
+  angles[PITCH] = measured_angles[PITCH];
+  angles[ROLL] = measured_angles[ROLL];*/
+  angles[YAW] = measured_angles[YAW] - reference_angles[YAW];
+  angles[PITCH] = measured_angles[PITCH] - reference_angles[PITCH];
+  angles[ROLL] = measured_angles[ROLL] - reference_angles[ROLL];
+    
+    
+  /*accelgyro.getAcceleration(&ax, &ay, &az);
+  accelgyro.getRotation(&gx, &gy, &gz);
+  Serial.print(transf_acc(ax)); Serial.print("\t");
+  Serial.print(transf_acc(ay)); Serial.print("\t");
+  Serial.print(transf_acc(az)); Serial.print("\t");
+  Serial.print(gx); Serial.print("\t");
+  Serial.print(gy); Serial.print("\t");
+  Serial.println(gz);*/
+  static int i = 0;
+  i++;
+  if(i == 100)
+  {
+  Serial.print("Unghiurile: ");
+  Serial.print(String(angles[YAW]) + " ");
+  Serial.print(String(angles[PITCH]) + " ");
+  Serial.println(String(angles[ROLL]));
+  i = 0;
   }
 }
 
@@ -395,4 +410,5 @@ void loop()
       command_complete = false;
     }
   }
+  sample_gyro();
 }
