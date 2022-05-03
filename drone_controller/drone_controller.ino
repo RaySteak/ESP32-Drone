@@ -2,7 +2,6 @@
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 #include <WiFi.h>
-#include "soc/rtc_wdt.h"
 
 // motor pins and chanels
 #define FRONT_LEFT_PIN 25 //CW, blue wire
