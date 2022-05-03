@@ -84,9 +84,13 @@ float angle_errors_sum[3] = {0.f, 0.f, 0.f};
 float angle_errors_prev[3] = {0.f, 0.f, 0.f};
 const float reference_angles[3] = {0.f, 0.f, 0.03f};
 
-const float kpid [3][3] = {{0.f, 0.f, 0.f},  // yaw:   P, I, D
+/*const float kpid [3][3] = {{0.f, 0.f, 0.f},  // yaw:   P, I, D
                            {0.2f, 0.f, 2.6f},  // pitch: P, I, D
-                           {0.2f, 0.f, 2.6f}}; // roll:  P, I, D
+                           {0.2f, 0.f, 2.6f}}; // roll:  P, I, D*/
+const float kpid [3][3] = {{0.1f, 0.f, 0.f},  // yaw:   P, I, D
+                           {0.08f, 0.f, 0.02f},  // pitch: P, I, D
+                           {0.08f, 0.f, 0.02f}}; // roll:  P, I, D
+
 
 int FIFO_packet_size;
 uint8_t *FIFO_buffer;
@@ -377,7 +381,6 @@ void loop()
     }
     if(command_complete)
     {
-      //Serial.println(command);
       int pos = command.indexOf(": ") + 2;
       String nr = command.substring(pos);
       int param = nr.toInt();
