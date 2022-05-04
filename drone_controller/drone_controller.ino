@@ -201,6 +201,27 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(MPU_INTERRUPT), sample_gyro_on_interrupt, RISING);
 }
 
+inline void unwind_pid()
+{
+  const float max_i[] = {1.f, 1.f, 1.f};
+  if (angle_errors_sum[YAW] < -max_i[YAW])
+    angle_errors_sum[YAW] = -max_i[YAW];
+  else if (angle_errors_sum[YAW] > max_i[YAW])
+    angle_errors_sum[YAW] = max_i[YAW];
+
+  if (angle_errors_sum[PITCH] < -max_i[PITCH])
+    angle_errors_sum[PITCH] = -max_i[PITCH];
+  else if (angle_errors_sum[PITCH] > max_i[PITCH])
+    angle_errors_sum[PITCH] = max_i[PITCH];
+
+  if (angle_errors_sum[ROLL] < -max_i[ROLL])
+    angle_errors_sum[ROLL] = -max_i[ROLL];
+  else if (angle_errors_sum[ROLL] > max_i[ROLL])
+    angle_errors_sum[ROLL] = max_i[ROLL];
+
+  Serial.println(String("Integrativa e ") + String(angle_errors_sum[YAW]) + " " + String(angle_errors_sum[PITCH]) + " " + String(angle_errors_sum[ROLL])); 
+}
+
 void drone_calibrate(void *param)
 {
   int i = 0;
@@ -241,6 +262,8 @@ void drone_calibrate(void *param)
     angle_errors_sum[YAW] += angle_errors[YAW];
     angle_errors_sum[PITCH] += angle_errors[PITCH];
     angle_errors_sum[ROLL] += angle_errors[ROLL];
+    
+    unwind_pid();
 
     angle_errors_delta[YAW] = angle_errors[YAW] - angle_errors_prev[YAW];
     angle_errors_delta[PITCH] = angle_errors[PITCH] - angle_errors_prev[PITCH];
