@@ -3,7 +3,7 @@
 #include "MPU6050_6Axis_MotionApps20.h"
 #include <WiFi.h>
 
-// motor pins and chanels
+// motor pins and channels
 #define FRONT_LEFT_PIN 25 //CW, blue wire
 #define FRONT_RIGHT_PIN 26 //CCW, red wire
 #define REAR_LEFT_PIN 27 //CW, black wire
@@ -14,7 +14,7 @@
 #define REAR_LEFT 2 //CW
 #define REAR_RIGHT 3 //CCW
 
-// frequenmcy for pwm (must be between 50 and 60)
+// frequency for pwm (must be between 50 and 60)
 #define PWM_FREQ 50
 
 // loop time in microseconds
@@ -36,6 +36,7 @@
 // control scaling constants
 #define SPIN_SCALE 500.f
 #define MAX_ANGLE 30.f
+#define PRINT_INTERVAL 100
 
 // math constants
 #define PI 3.14159265359
@@ -72,8 +73,8 @@ void IRAM_ATTR sample_gyro_on_interrupt()
 
 // everything else gyro-related
 MPU6050 accelgyro;
-const int16_t acc_off[3] = {-5909, 6131, 8659};
-const int16_t gyr_off[3] = {-28, -26, -17};
+const int16_t acc_off[3] = {-5815, 6185, 8661};
+const int16_t gyr_off[3] = {-26, -24, -14};
 Quaternion quat;
 VectorFloat grav;
 
@@ -82,7 +83,7 @@ float desired_angles[3] = {0.f, 0.f, 0.f};
 float angle_errors[3];
 float angle_errors_sum[3] = {0.f, 0.f, 0.f};
 float angle_errors_prev[3] = {0.f, 0.f, 0.f};
-const float reference_angles[3] = {0.f, 0.f, 0.06f};
+const float reference_angles[3] = {0.f, -0.03f, 0.08f};
 
 /*const float kpid [3][3] = {{0.1f, 0.f, 0.f},  // yaw:   P, I, D
                            {0.08f, 0.01f, 1.f},  // pitch: P, I, D
@@ -219,18 +220,18 @@ inline void unwind_pid()
   else if (angle_errors_sum[ROLL] > max_i[ROLL])
     angle_errors_sum[ROLL] = max_i[ROLL];
 
-  //Serial.println(String("Integrativa e ") + String(angle_errors_sum[YAW]) + " " + String(angle_errors_sum[PITCH]) + " " + String(angle_errors_sum[ROLL])); 
+  //Serial.println(String("Integrative is ") + String(angle_errors_sum[YAW]) + " " + String(angle_errors_sum[PITCH]) + " " + String(angle_errors_sum[ROLL])); 
 }
 
 void drone_calibrate(void *param)
 {
-  int i = 0;
+  int cnt = 0;
   
   float angle_errors_delta[3];
   float actual_angles[3];
   float pid[3];
 
-  bool printed_zero = false;
+  bool printed_stop = false;
   bool led_state = false;
   
   while(true)
@@ -243,17 +244,17 @@ void drone_calibrate(void *param)
       ledcWrite(REAR_LEFT, throttle_to_pwm(joystick_throttle));
       ledcWrite(REAR_RIGHT, throttle_to_pwm(joystick_throttle));
 
-      if(!printed_zero)
+      if(!printed_stop)
       {
         Serial.println("STOP");
-        printed_zero = true;
+        printed_stop = true;
       }
       digitalWrite(LED_BUILTIN, LOW);
       
       continue;
     }
     else
-      printed_zero = false;
+      printed_stop = false;
     
     angle_errors[YAW] = desired_angles[YAW] - angles[YAW];
     angle_errors[PITCH] = desired_angles[PITCH] - angles[PITCH];
@@ -287,14 +288,17 @@ void drone_calibrate(void *param)
     throttle_rear_left = max(0.f, min(throttle_rear_left, 1.f));
     throttle_rear_right = max(0.f, min(throttle_rear_right, 1.f));
 
-    if(i == 100)
+    if(++cnt == PRINT_INTERVAL)
     {
-    Serial.println(String(throttle_front_left) + " " + String(throttle_front_right) + " " + String(throttle_rear_left) + " " + String(throttle_rear_right));
-    i = 0;
-    led_state = !led_state;
-    digitalWrite(LED_BUILTIN, led_state);
+      Serial.print(String("Throttle: "));
+      Serial.print(String(throttle_front_left) + " ");
+      Serial.print(String(throttle_front_right) + " ");
+      Serial.print(String(throttle_rear_left) + " ");
+      Serial.println(String(throttle_rear_right));
+      cnt = 0;
+      led_state = !led_state;
+      digitalWrite(LED_BUILTIN, led_state);
     }
-    i++;
     
     ledcWrite(FRONT_LEFT, throttle_to_pwm(throttle_front_left));
     ledcWrite(FRONT_RIGHT, throttle_to_pwm(throttle_front_right));
@@ -313,6 +317,7 @@ void sample_gyro()
   float aux_angles[3];
   bool first_measurement = true;
   float measured_angles[3];
+  static int cnt = 0;
   
   if(!gyro_ready)
     return;
@@ -321,15 +326,13 @@ void sample_gyro()
 
   if((stat & (1 << MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || accelgyro.getFIFOCount() >= 1024)
   {
-    Serial.println(String("HAI CA S-A RESETAT ") + String(accelgyro.getFIFOCount()));
+    Serial.println(String("GYRO RESET ") + String(accelgyro.getFIFOCount()));
     accelgyro.resetFIFO();
     return;
   }
     
   while(accelgyro.getFIFOCount() < FIFO_packet_size)
-  {
-    Serial.println("ASTEPTAM SA CITIM");
-  }
+    Serial.println("WAITING TO READ");
   
   accelgyro.getFIFOBytes(FIFO_buffer, FIFO_packet_size);
   accelgyro.dmpGetQuaternion(&quat, FIFO_buffer);
@@ -361,15 +364,13 @@ void sample_gyro()
   Serial.print(gx); Serial.print("\t");
   Serial.print(gy); Serial.print("\t");
   Serial.println(gz);*/
-  static int i = 0;
-  i++;
-  if(i == 100)
+  if(++cnt == PRINT_INTERVAL)
   {
-  Serial.print("Unghiurile: ");
-  Serial.print(String(angles[YAW]) + " ");
-  Serial.print(String(angles[PITCH]) + " ");
-  Serial.println(String(angles[ROLL]));
-  i = 0;
+    Serial.print("Angles: ");
+    Serial.print(String(angles[YAW]) + " ");
+    Serial.print(String(angles[PITCH]) + " ");
+    Serial.println(String(angles[ROLL]));
+    cnt = 0;
   }
 }
 
