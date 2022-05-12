@@ -46,6 +46,7 @@ const char* password = "incercatisamahackati";
 WiFiServer server(42069);
 WiFiClient client;
 bool has_disconnected = false;
+bool is_connected = false;
 
 // current command values
 float joystick_throttle;
@@ -81,15 +82,14 @@ float desired_angles[3] = {0.f, 0.f, 0.f};
 float angle_errors[3];
 float angle_errors_sum[3] = {0.f, 0.f, 0.f};
 float angle_errors_prev[3] = {0.f, 0.f, 0.f};
-const float reference_angles[3] = {0.f, 0.f, 0.03f};
+const float reference_angles[3] = {0.f, 0.f, 0.06f};
 
 /*const float kpid [3][3] = {{0.f, 0.f, 0.f},  // yaw:   P, I, D
                            {0.2f, 0.f, 2.6f},  // pitch: P, I, D
                            {0.2f, 0.f, 2.6f}}; // roll:  P, I, D*/
 const float kpid [3][3] = {{0.1f, 0.f, 0.f},  // yaw:   P, I, D
-                           {0.08f, 0.f, 0.02f},  // pitch: P, I, D
-                           {0.08f, 0.f, 0.02f}}; // roll:  P, I, D
-
+                           {0.08f, 0.01f, 1.f},  // pitch: P, I, D
+                           {0.08f, 0.01f, 1.f}}; // roll:  P, I, D
 
 int FIFO_packet_size;
 uint8_t *FIFO_buffer;
@@ -98,7 +98,7 @@ uint8_t *FIFO_buffer;
 
 inline uint16_t throttle_to_pwm(double ms)
 {
-  return uint16_t((ms + 1.0/* + 0.15*/) / 1000.0 * double(PWM_FREQ) * 65535.0);
+  return uint16_t((ms + 1.0) / 1000.0 * double(PWM_FREQ) * 65535.0);
 }
 
 void WiFiEvent(WiFiEvent_t event)
@@ -219,7 +219,7 @@ inline void unwind_pid()
   else if (angle_errors_sum[ROLL] > max_i[ROLL])
     angle_errors_sum[ROLL] = max_i[ROLL];
 
-  Serial.println(String("Integrativa e ") + String(angle_errors_sum[YAW]) + " " + String(angle_errors_sum[PITCH]) + " " + String(angle_errors_sum[ROLL])); 
+  //Serial.println(String("Integrativa e ") + String(angle_errors_sum[YAW]) + " " + String(angle_errors_sum[PITCH]) + " " + String(angle_errors_sum[ROLL])); 
 }
 
 void drone_calibrate(void *param)
@@ -236,12 +236,12 @@ void drone_calibrate(void *param)
   while(true)
   {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if(joystick_throttle == 0.f)
+    if(joystick_throttle <= 0.f)
     {
-      ledcWrite(FRONT_LEFT, throttle_to_pwm(0.f));
-      ledcWrite(FRONT_RIGHT, throttle_to_pwm(0.f));
-      ledcWrite(REAR_LEFT, throttle_to_pwm(0.f));
-      ledcWrite(REAR_RIGHT, throttle_to_pwm(0.f));
+      ledcWrite(FRONT_LEFT, throttle_to_pwm(joystick_throttle));
+      ledcWrite(FRONT_RIGHT, throttle_to_pwm(joystick_throttle));
+      ledcWrite(REAR_LEFT, throttle_to_pwm(joystick_throttle));
+      ledcWrite(REAR_RIGHT, throttle_to_pwm(joystick_throttle));
 
       if(!printed_zero)
       {
@@ -382,17 +382,26 @@ void loop()
   {
     client.stop();
     has_disconnected = false;
-    joystick_throttle = 0.f;
+    joystick_throttle = -1.f;
   }
   if(!client.connected())
   {
     client = server.available();
     command_complete = false;
     command = "";
-    joystick_throttle = 0.f;
+    if (is_connected)
+    {
+      is_connected = false;
+      joystick_throttle = -1.f;
+    }
   }
   else
   {
+    if (!is_connected)
+    {
+      is_connected = true;
+      joystick_throttle = 0.f;
+    }
     if(client.available())
     {
       char c = client.read();
