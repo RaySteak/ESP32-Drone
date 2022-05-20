@@ -89,8 +89,8 @@ const float reference_angles[3] = {0.f, -0.05f, 0.06f};
                            {0.08f, 0.01f, 1.f},  // pitch: P, I, D
                            {0.08f, 0.01f, 1.f}}; // roll:  P, I, D*/
 const float kpid [3][3] = {{0.1f, 0.f, 0.f},  // yaw:   P, I, D
-                           {0.25f, 0.00f, 1.5f},  // pitch: P, I, D
-                           {0.25f, 0.00f, 1.5f}}; // roll:  P, I, D
+                           {0.25f, 0.001f, 1.5f},  // pitch: P, I, D
+                           {0.25f, 0.001f, 1.5f}}; // roll:  P, I, D
 
 int FIFO_packet_size;
 uint8_t *FIFO_buffer;
@@ -121,10 +121,10 @@ void setup()
   Serial.begin(38400);
 
   // FLIGHT SETUP CODE
-  ledcSetup(FRONT_LEFT, 55, 16); // canal 0, frecventa 55, 16 biti rezolutie
-  ledcSetup(FRONT_RIGHT, 55, 16); // canal 1, frecventa 55, 16 biti rezolutie
-  ledcSetup(REAR_LEFT, 55, 16); // canal 2, frecventa 55, 16 biti rezolutie
-  ledcSetup(REAR_RIGHT, 55, 16); // canal 3, frecventa 55, 16 biti rezolutie
+  ledcSetup(FRONT_LEFT, 55, 16); // channel 0, frequency 55, 16 bits resolution
+  ledcSetup(FRONT_RIGHT, 55, 16); // channel 1, frequency 55, 16 bits resolution
+  ledcSetup(REAR_LEFT, 55, 16); // channel 2, frequency 55, 16 bits resolution
+  ledcSetup(REAR_RIGHT, 55, 16); // channe 3, frequency 55, 16 bits resolution
     
   ledcAttachPin(FRONT_LEFT_PIN, FRONT_LEFT);
   ledcAttachPin(FRONT_RIGHT_PIN, FRONT_RIGHT);
@@ -137,24 +137,26 @@ void setup()
   ledcWrite(FRONT_RIGHT, startup_freq);
   ledcWrite(REAR_LEFT, startup_freq);
   ledcWrite(REAR_RIGHT, startup_freq);
-  
+
+  // uncomment to check that motors will spin in this order: FL, FR, RL, RR
   /*delay(3000);
-  ledcWrite(FRONT_LEFT, throttle_to_pwm(0.27 , 55));
+  ledcWrite(FRONT_LEFT, throttle_to_pwm(0.27));
   delay(2000);
-  ledcWrite(FRONT_LEFT, throttle_to_pwm(0.00 , 55));
-  ledcWrite(FRONT_RIGHT, throttle_to_pwm(0.27 , 55));
+  ledcWrite(FRONT_LEFT, throttle_to_pwm(0.00));
+  ledcWrite(FRONT_RIGHT, throttle_to_pwm(0.27));
   delay(2000);
-  ledcWrite(FRONT_RIGHT, throttle_to_pwm(0.00 , 55));
-  ledcWrite(REAR_LEFT, throttle_to_pwm(0.27 , 55));
+  ledcWrite(FRONT_RIGHT, throttle_to_pwm(0.00));
+  ledcWrite(REAR_LEFT, throttle_to_pwm(0.27));
   delay(2000);
-  ledcWrite(REAR_LEFT,throttle_to_pwm(0.00 , 55));
-  ledcWrite(REAR_RIGHT, throttle_to_pwm(0.27 , 55));
+  ledcWrite(REAR_LEFT,throttle_to_pwm(0.00));
+  ledcWrite(REAR_RIGHT, throttle_to_pwm(0.27));
   delay(2000);
-  ledcWrite(REAR_RIGHT, throttle_to_pwm(0.00 , 55));
-  ledcWrite(FRONT_LEFT, zero_freq);
-  ledcWrite(FRONT_RIGHT, zero_freq);
-  ledcWrite(REAR_LEFT, zero_freq);
-  ledcWrite(REAR_RIGHT, zero_freq);*/
+  ledcWrite(REAR_RIGHT, throttle_to_pwm(0.00));
+  ledcWrite(FRONT_LEFT, startup_freq);
+  ledcWrite(FRONT_RIGHT, startup_freq);
+  ledcWrite(REAR_LEFT, startup_freq);
+  ledcWrite(REAR_RIGHT, startup_freq);
+  while(true);*/
 
   // Wi-Fi AP
   WiFi.softAP(ssid, password);
@@ -169,7 +171,7 @@ void setup()
   xTaskCreate(drone_calibrate, "drone_calibrate", 5000, NULL, 0, &calibration_handle);
 
   // 8kHz looptime would be ideal, to match modern speed controllers
-  // but it can't be achieved because the MPU6050 acceleration sensor sampling rate
+  // and it can't be achieved because the MPU6050 acceleration sensor sampling rate
   // is 1kHz, even though gyro sampling rate is 8kHz. But it gets worse, doing our
   // own fusion of gyro and acceleration samples would be a pain so we will use
   // the sensor's DMP which only has a sample rate of 200hZ but provides us
@@ -193,7 +195,7 @@ void setup()
   FIFO_buffer = (uint8_t *)malloc(FIFO_packet_size * sizeof(uint8_t));
   
   // We want 200Hz looptime, so a loop every 5ms 
-  // 80MHz base timer frequency, divided by 80 gives 1MHz freq, so each increment will be 1us
+  // 80MHz base timer frequency, divided by 80 gives us 1MHz freq, so each increment will be 1us
   calibration_timer = timerBegin(0, 80, true); // timer 0, 80 prescaler, count up
   timerAttachInterrupt(calibration_timer, &drone_calibrate_on_timer, true);
   timerAlarmWrite(calibration_timer, LOOP_TIME_us, true); // 5ms looptime
