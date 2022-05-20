@@ -169,7 +169,7 @@ void setup()
   xTaskCreate(drone_calibrate, "drone_calibrate", 5000, NULL, 0, &calibration_handle);
 
   // 8kHz looptime would be ideal, to match modern speed controllers
-  // and it can't be achieved because the MPU6050 acceleration sensor sampling rate
+  // but it can't be achieved because the MPU6050 acceleration sensor sampling rate
   // is 1kHz, even though gyro sampling rate is 8kHz. But it gets worse, doing our
   // own fusion of gyro and acceleration samples would be a pain so we will use
   // the sensor's DMP which only has a sample rate of 200hZ but provides us
