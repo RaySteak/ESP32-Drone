@@ -83,7 +83,7 @@ float desired_angles[3] = {0.f, 0.f, 0.f};
 float angle_errors[3];
 float angle_errors_sum[3] = {0.f, 0.f, 0.f};
 float angle_errors_prev[3] = {0.f, 0.f, 0.f};
-const float reference_angles[3] = {0.f, -0.03f, 0.08f};
+const float reference_angles[3] = {0.f, -0.05f, 0.06f};
 
 /*const float kpid [3][3] = {{0.1f, 0.f, 0.f},  // yaw:   P, I, D
                            {0.08f, 0.01f, 1.f},  // pitch: P, I, D
