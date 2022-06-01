@@ -1,4 +1,3 @@
-#define INCLUDE_vTaskSuspend 1
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 #include <WiFi.h>
@@ -34,7 +33,7 @@
 #define PID_D 2
 
 // control scaling constants
-#define SPIN_SCALE 500.f
+#define SPIN_SCALE 100.f
 #define MAX_ANGLE 30.f
 #define PRINT_INTERVAL 100
 
@@ -104,7 +103,7 @@ inline uint16_t throttle_to_pwm(double ms)
 
 void WiFiEvent(WiFiEvent_t event)
 {
-  switch(event)
+  switch (event)
   {
   case SYSTEM_EVENT_AP_STADISCONNECTED:
     has_disconnected = true;
@@ -171,7 +170,7 @@ void setup()
   xTaskCreate(drone_calibrate, "drone_calibrate", 5000, NULL, 0, &calibration_handle);
 
   // 8kHz looptime would be ideal, to match modern speed controllers
-  // and it can't be achieved because the MPU6050 acceleration sensor sampling rate
+  // but it can't be achieved because the MPU6500 acceleration sensor sampling rate
   // is 1kHz, even though gyro sampling rate is 8kHz. But it gets worse, doing our
   // own fusion of gyro and acceleration samples would be a pain so we will use
   // the sensor's DMP which only has a sample rate of 200hZ but provides us
@@ -236,17 +235,17 @@ void drone_calibrate(void *param)
   bool printed_stop = false;
   bool led_state = false;
   
-  while(true)
+  while (true)
   {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if(joystick_throttle <= 0.f)
+    if (joystick_throttle <= 0.f)
     {
       ledcWrite(FRONT_LEFT, throttle_to_pwm(joystick_throttle));
       ledcWrite(FRONT_RIGHT, throttle_to_pwm(joystick_throttle));
       ledcWrite(REAR_LEFT, throttle_to_pwm(joystick_throttle));
       ledcWrite(REAR_RIGHT, throttle_to_pwm(joystick_throttle));
 
-      if(!printed_stop)
+      if (!printed_stop)
       {
         Serial.println("STOP");
         printed_stop = true;
@@ -261,6 +260,11 @@ void drone_calibrate(void *param)
     angle_errors[YAW] = desired_angles[YAW] - angles[YAW];
     angle_errors[PITCH] = desired_angles[PITCH] - angles[PITCH];
     angle_errors[ROLL] = desired_angles[ROLL] - angles[ROLL];
+    // correct YAW error
+    if (angle_errors[YAW] < -PI)
+      angle_errors[YAW] += 2 * PI;
+    else if (angle_errors[YAW] >= PI)
+      angle_errors[YAW] -= 2 * PI;
 
     angle_errors_sum[YAW] += angle_errors[YAW];
     angle_errors_sum[PITCH] += angle_errors[PITCH];
